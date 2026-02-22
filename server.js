@@ -12,64 +12,72 @@ app.use(express.json());
 
 const { MONGO_URI, JWT_SECRET, RAPIDAPI_KEY, SPOTIFY_HOST, YT_HOST } = process.env;
 
-// --- DATABASE & USER MODEL ---
+// 1. DATABASE CONNECTION
 mongoose.connect(MONGO_URI).then(() => console.log("LyraX DB Active"));
 
-const UserSchema = new mongoose.Schema({
+const User = mongoose.model('User', new mongoose.Schema({
     email: { type: String, unique: true, required: true },
-    password: { type: String, required: true },
-    favorites: Array
-});
-const User = mongoose.model('User', UserSchema);
+    password: { type: String, required: true }
+}));
 
-// --- AUTH ROUTES ---
-app.post('/auth/signup', async (req, res) => {
-    const hashedPassword = await bcrypt.hash(req.body.password, 10);
+// 2. AUTH MIDDLEWARE
+const authenticate = (req, res, next) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).send("Access Denied");
     try {
-        const user = await User.create({ email: req.body.email, password: hashedPassword });
-        res.json({ message: "User Created" });
-    } catch (e) { res.status(400).json({ error: "Email exists" }); }
+        req.user = jwt.verify(token, JWT_SECRET);
+        next();
+    } catch (e) { res.status(403).send("Invalid Token"); }
+};
+
+// 3. AUTH ROUTES
+app.post('/auth/signup', async (req, res) => {
+    try {
+        const hashedPassword = await bcrypt.hash(req.body.password, 10);
+        await User.create({ email: req.body.email, password: hashedPassword });
+        res.json({ message: "Success" });
+    } catch (e) { res.status(400).json({ error: "Email already exists" }); }
 });
 
 app.post('/auth/login', async (req, res) => {
     const user = await User.findOne({ email: req.body.email });
     if (user && await bcrypt.compare(req.body.password, user.password)) {
-        const token = jwt.sign({ userId: user._id }, JWT_SECRET);
+        const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' });
         res.json({ token });
-    } else { res.status(401).json({ error: "Invalid Credentials" }); }
+    } else { res.status(401).json({ error: "Wrong credentials" }); }
 });
 
-// --- MIDDLEWARE TO PROTECT ROUTES ---
-const authenticate = (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).send("No Token");
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-        if (err) return res.status(403).send("Invalid Token");
-        req.userId = decoded.userId;
-        next();
-    });
-};
-
-// --- PROTECTED MUSIC ROUTES ---
+// 4. MUSIC SEARCH (Spotify23)
 app.get('/api/search', authenticate, async (req, res) => {
-    const response = await axios.get(`https://${SPOTIFY_HOST}/search/`, {
-        params: { q: req.query.q, type: 'tracks' },
-        headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': SPOTIFY_HOST }
-    });
-    res.json(response.data.tracks.items);
+    try {
+        const response = await axios.get(`https://${SPOTIFY_HOST}/search/`, {
+            params: { q: req.query.q, type: 'tracks' },
+            headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': SPOTIFY_HOST }
+        });
+        res.json(response.data.tracks.items);
+    } catch (e) { res.status(500).send("Search Error"); }
 });
 
+// 5. AUDIO STREAMING (YouTube MP36)
 app.get('/api/stream', authenticate, async (req, res) => {
     const { title, artist } = req.query;
-    const search = await axios.get(`https://${YT_HOST}/search_video`, {
-        params: { query: `${title} ${artist} audio`, limit: 1 },
-        headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': YT_HOST }
-    });
-    const videoId = search.data.result[0].id;
-    const download = await axios.get(`https://${YT_HOST}/get_mp3_download_link/${videoId}`, {
-        headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': YT_HOST }
-    });
-    res.json({ url: download.data.link });
+    try {
+        // Step A: Search for the video to get ID
+        const search = await axios.get(`https://${YT_HOST}/search`, {
+            params: { q: `${title} ${artist}` },
+            headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': YT_HOST }
+        });
+        const videoId = search.data[0].id; // Pulling ID from the first search result
+
+        // Step B: Get the MP3 download link using /dl endpoint
+        const download = await axios.get(`https://${YT_HOST}/dl`, {
+            params: { id: videoId },
+            headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': YT_HOST }
+        });
+        
+        // Return the link found in the YouTube MP36 response
+        res.json({ url: download.data.link });
+    } catch (e) { res.status(500).json({ error: "Audio fetch failed" }); }
 });
 
-app.listen(process.env.PORT || 3000);
+app.listen(process.env.PORT || 3000, () => console.log("LyraX Universal Live"));
