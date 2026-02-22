@@ -6,43 +6,46 @@ require('dotenv').config();
 const app = express();
 app.use(cors());
 
-const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, FRONTEND_URL } = process.env;
+const { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, FRONTEND_URL, RAPIDAPI_KEY, RAPIDAPI_HOST } = process.env;
 
-// --- FIX FOR UPTIME ROBOT (404 Error Fix) ---
-app.get('/', (req, res) => {
-    res.status(200).send("LyraX Backend is Alive & Awake!");
-});
+// Health Check for UptimeRobot
+app.get('/', (req, res) => res.status(200).send("LyraX Blue Active"));
 
-// Spotify Login Route
 app.get('/login', (req, res) => {
     const scope = 'user-read-playback-state user-modify-playback-state streaming user-read-email user-read-private';
     res.redirect('https://accounts.spotify.com/authorize?' + 
-        new URLSearchParams({
-            response_type: 'code',
-            client_id: CLIENT_ID,
-            scope: scope,
-            redirect_uri: REDIRECT_URI
-        }).toString());
+        new URLSearchParams({ response_type: 'code', client_id: CLIENT_ID, scope, redirect_uri: REDIRECT_URI }).toString());
 });
 
-// Callback Route
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
     try {
         const response = await axios.post('https://accounts.spotify.com/api/token', new URLSearchParams({
-            grant_type: 'authorization_code',
-            code: code,
-            redirect_uri: REDIRECT_URI,
-            client_id: CLIENT_ID,
-            client_secret: CLIENT_SECRET
+            grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI, client_id: CLIENT_ID, client_secret: CLIENT_SECRET
         }), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
 
-        // Sends token back to your UI
         res.redirect(`${FRONTEND_URL}?token=${response.data.access_token}`);
     } catch (error) {
-        res.status(500).send("Auth Failed. Check Render Environment Variables.");
+        res.status(500).send("Auth Failed");
+    }
+});
+
+// --- NEW: RAPIDAPI LYRICS ROUTE ---
+app.get('/lyrics', async (req, res) => {
+    const { track_id } = req.query;
+    try {
+        const options = {
+            method: 'GET',
+            url: `https://${RAPIDAPI_HOST}/track_lyrics`, // Verify this endpoint on your RapidAPI dashboard
+            params: { id: track_id },
+            headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': RAPIDAPI_HOST }
+        };
+        const response = await axios.request(options);
+        res.json(response.data);
+    } catch (error) {
+        res.status(500).json({ error: "Lyrics unavailable" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`LyraX running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running`));
