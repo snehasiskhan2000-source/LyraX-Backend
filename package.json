@@ -1,7 +1,7 @@
 {
   "name": "lyrax-backend",
-  "version": "1.0.0",
-  "description": "LyraX Spotify Backend",
+  "version": "1.1.0",
+  "description": "LyraX Blue Backend with Lyrics Support",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
